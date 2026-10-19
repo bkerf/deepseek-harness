@@ -2,6 +2,7 @@
 
 import type { Provider } from '@earendil-works/pi-ai'
 import type { LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
+import { recordKeyFor } from './auth.ts'
 import { PROVIDER_DATA } from './provider-data.generated.ts'
 
 /**
@@ -15,5 +16,5 @@ export function providerDefaultsOf(provider: Provider): Pick<LlmConfigurableProv
   // unrecorded provider remains configurable without guessed auth metadata.
   if (data === undefined) return provider.baseUrl && !provider.baseUrl.includes('{') ? { defaultBaseURL: provider.baseUrl } : {}
   const { env, ...endpoint } = data
-  return { ...endpoint, nativeAuth: { env, oauth: provider.auth.oauth !== undefined } }
+  return { ...endpoint, nativeAuth: { env, oauth: provider.auth.oauth !== undefined, authorizationKey: recordKeyFor(provider.id) } }
 }

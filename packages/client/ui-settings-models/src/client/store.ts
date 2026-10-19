@@ -9,7 +9,7 @@
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {
-  CredentialInfo, LlmConfigurableProvider, LlmNativeAuth, LlmProviderInfo, SettingsNamespaceView,
+  CredentialInfo, LlmConfigurableProvider, LlmNativeAuth, LlmProviderInfo, ProviderAuthorization, SettingsNamespaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -98,6 +98,8 @@ export interface ProviderRow {
   derivedCredential?: CredentialInfo
   /** Redacted checks for named or native references; absent when their read failed. */
   credentialChecks?: Readonly<Record<string, CredentialInfo>>
+  /** OAuth flow and redacted stored sign-in state, supplied by its owning adapter. */
+  authorization?: ProviderAuthorization
 }
 
 /** Page snapshot. */
@@ -284,6 +286,16 @@ export class ModelsSettingsStore {
       if (response.ok) Object.assign(credentials, response.value)
       else { credentialError = response.error.message; break }
     }
+    const authorizationRows = await Promise.all(rows.flatMap((row) => {
+      const key = row.apiKeyEnv === undefined && row.entry.nativeAuth?.oauth === true
+        ? row.entry.nativeAuth.authorizationKey : undefined
+      return key === undefined ? [] : [this.ctx.remote.credentials.authorization(key)
+        .then(response => [row.entry.provider, response] as const)]
+    }))
+    const authorizations = new Map(authorizationRows.flatMap(([provider, response]) =>
+      response.ok && response.value !== null && response.value.methods.some(method => method.id === 'oauth')
+        ? [[provider, response.value] as const] : []))
+    credentialError ??= authorizationRows.flatMap(([, response]) => response.ok ? [] : [response.error.message])[0] ?? null
     if (generation !== this.generation) return
     this.store.update((s) => {
       s.status = 'ready'
@@ -294,8 +306,10 @@ export class ModelsSettingsStore {
         if (row.entry.provider === 'deepseek-account') return row
         const named = row.apiKeyEnv === undefined ? undefined : credentials[row.apiKeyEnv]
         const derived = row.apiKeyEnv !== undefined ? undefined : credentials[deriveKeyRef(row.entry.provider)]
+        const authorization = authorizations.get(row.entry.provider)
         return {
           ...row,
+          ...authorization === undefined ? {} : { authorization },
           ...named === undefined ? {} : { credential: named },
           ...derived === undefined ? {} : { derivedCredential: derived },
           ...credentialError === null ? { credentialChecks: Object.fromEntries(
@@ -341,8 +355,9 @@ export class ModelsSettingsStore {
 export function providerUsable(row: ProviderRow): boolean {
   if (!row.entry.active) return false
   if (row.entry.provider === 'deepseek-account') return row.accountAvailable === true
-  if (row.apiKeyEnv === undefined) return true
-  return row.credential?.configured === true
+  return row.apiKeyEnv !== undefined
+    ? row.credential?.configured === true
+    : row.entry.nativeAuth?.oauth !== true || row.entry.nativeAuth.env.length > 0 || row.authorization?.configured === true
 }
 
 /** First-run onboarding readiness derived only from the shared Models join. */

@@ -6,11 +6,14 @@
  */
 
 import { Context } from '@deepseek-ai/cordis'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import type {} from '@deepseek-ai/dsh-authorization'
+import { credentialRef, parseCredentialKey } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
-import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { Remote, RemoteError, TypertRemoteService, type RemoteStream } from '@deepseek-ai/dsh-typert-protocol'
 import { z } from 'zod'
+import { authorizeProvider } from './provider-authorization.ts'
+import type { ProviderAuthorization, ProviderAuthorizationAnswer, ProviderAuthorizationFrame } from './types.ts'
 
 /**
  * Fan-out bound on one remote `describe` batch. A settings page asks about the
@@ -25,6 +28,7 @@ const describeRequestSchema = z.object({
 })
 const setRequestSchema = z.object({ ref: credentialRefSchema, value: z.string().min(1) })
 const unsetRequestSchema = z.object({ ref: credentialRefSchema })
+const authorizationRequestSchema = z.object({ key: z.string().regex(/^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*$/) })
 
 /** Parse the domain constraints that are more specific than generated TypeScript codecs. */
 function parseRequest<T>(method: string, schema: z.ZodType<T>, value: unknown): T {
@@ -68,6 +72,40 @@ export class CredentialsController extends TypertRemoteService {
   /** @param ctx - Host context where a credential provider may be mounted. */
   constructor(ctx: Context) {
     super(ctx, 'credentialsController', { namespace: 'credentials' })
+  }
+
+  /**
+   * Describe the sign-in methods and stored state for one provider credential.
+   * @param key - scoped credential record key owned by the provider adapter.
+   * @returns the registered flow and redacted state, or null when no flow is registered.
+   */
+  @Remote
+  async authorization(key: string): Promise<ProviderAuthorization | null> {
+    const request = parseRequest('credentials.authorization', authorizationRequestSchema, { key })
+    const recordKey = parseCredentialKey(request.key)
+    const flow = this.ctx.get('authorization')?.describe(recordKey)
+    return flow === undefined ? null : {
+      ...flow,
+      configured: (await this.provider().describeRecord(recordKey)).configured,
+    }
+  }
+
+  /**
+   * Run a provider-owned sign-in conversation on one cancellable duplex stream.
+   * @param key - scoped credential record key owned by the provider adapter.
+   * @param method - one method advertised by that flow.
+   * @param signal - physical Remote stream cancellation.
+   * @returns progress, prompts, withdrawals, and the committed outcome; never a credential value.
+   */
+  @Remote({ mode: 'stream' })
+  authorize(key: string, method: string, signal: AbortSignal): RemoteStream<ProviderAuthorizationFrame, ProviderAuthorizationAnswer> {
+    const request = parseRequest('credentials.authorize', authorizationRequestSchema, { key })
+    const authorization = this.ctx.get('authorization')
+    if (authorization === undefined) throw new RemoteError('gateway/internal', 'authorization service is absent', {})
+    const invocation = this.ctx.invocation
+    if (invocation === undefined) throw new RemoteError('gateway/internal', 'provider authorization requires a Remote invocation', {})
+    return authorizeProvider(authorization, parseCredentialKey(request.key), method,
+      invocation.uplink<ProviderAuthorizationAnswer>(), signal)
   }
 
   /**

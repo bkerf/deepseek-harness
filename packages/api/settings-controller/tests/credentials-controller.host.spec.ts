@@ -45,6 +45,8 @@ describe('the credentials Remote namespace a configuration surface calls', () =>
     expect(binding.serviceKey).toBe('credentialsController')
     expect(binding.namespace).toBe('credentials')
     expect(remoteMethods(controller)).toEqual([
+      { method: 'authorization', invocation: { kind: 'direct' } },
+      { method: 'authorize', invocation: { kind: 'direct' }, mode: 'stream' },
       { method: 'describe', invocation: { kind: 'direct' } },
       { method: 'set', invocation: { kind: 'direct' } },
       { method: 'unset', invocation: { kind: 'direct' } },

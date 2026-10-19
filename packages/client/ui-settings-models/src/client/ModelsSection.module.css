@@ -735,6 +735,37 @@ select.input {
   color: var(--dsw-alias-state-error-primary);
 }
 
+.oauthActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.oauthNotice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.oauthLink {
+  color: var(--dsw-alias-state-business-primary);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.oauthCode {
+  padding: 6px 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  user-select: all;
+}
+
 .deleteDialog {
   width: min(480px, 100%);
 }

@@ -7,6 +7,31 @@
  * @module @deepseek-ai/dsh-api-settings-controller/types
  */
 
+import type { AuthorizationEntry, AuthorizationNotice, AuthorizationPrompt } from '@deepseek-ai/dsh-authorization/types'
+
+/** A registered provider sign-in and its stored credential state, without credential values. */
+export interface ProviderAuthorization extends AuthorizationEntry {
+  readonly configured: boolean
+}
+
+/** A provider question whose cancellation remains owned by the Host. */
+export type ProviderAuthorizationPrompt =
+  | Omit<Extract<AuthorizationPrompt, { kind: 'text' | 'secret' }>, 'signal'>
+  | Omit<Extract<AuthorizationPrompt, { kind: 'select' }>, 'signal'>
+
+/** Progress and human interaction carried by one provider sign-in stream. */
+export type ProviderAuthorizationFrame =
+  | { readonly type: 'notice'; readonly notice: AuthorizationNotice }
+  | { readonly type: 'prompt'; readonly id: string; readonly prompt: ProviderAuthorizationPrompt }
+  | { readonly type: 'prompt-cancelled'; readonly id: string }
+  | { readonly type: 'outcome'; readonly status: 'authorized' | 'cancelled' }
+
+/** The answer to one Host-issued provider question. */
+export interface ProviderAuthorizationAnswer {
+  readonly id: string
+  readonly value: string
+}
+
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface RemoteErrorDetailsMap {
     /**

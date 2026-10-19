@@ -283,6 +283,8 @@ export interface LlmNativeAuth {
   env: readonly string[]
   /** Whether a stored OAuth sign-in can authenticate the route. */
   oauth: boolean
+  /** Credential record addressed by the provider's registered authorization flow. */
+  authorizationKey?: string
 }
 
 /**

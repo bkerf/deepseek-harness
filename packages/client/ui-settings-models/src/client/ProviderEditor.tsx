@@ -21,9 +21,9 @@
  * see instead of rebuilding the whole subtree from a partial descriptor.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { CredentialInfo, LlmNativeAuth, SettingsNamespaceView, SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { CredentialInfo, LlmNativeAuth, ProviderAuthorization, ProviderAuthorizationFrame, SettingsNamespaceView, SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
@@ -82,6 +82,10 @@ export interface ProviderEditorProps {
   credential?: CredentialInfo
   /** Redacted checks for the profile's named reference or the provider's native variables. */
   credentialChecks?: Readonly<Record<string, CredentialInfo>>
+  /** Provider-owned authorization methods and redacted OAuth credential state. */
+  authorization?: ProviderAuthorization
+  /** Refresh the credential snapshot after a successful provider sign-in. */
+  onAuthorized?: () => void
   /** Section copy. */
   t: (key: keyof typeof en) => string
   /** Disable writes (read-only settings provider). */
@@ -182,8 +186,16 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const [keyDraft, setKeyDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [listBusy, setListBusy] = useState(false)
+  const [oauthBusy, setOAuthBusy] = useState(false)
+  const [oauthStatus, setOAuthStatus] = useState<'authorized' | 'cancelled'>()
+  const [oauthFailure, setOAuthFailure] = useState<string>()
+  const [oauthNotice, setOAuthNotice] = useState<Extract<ProviderAuthorizationFrame, { type: 'notice' }>['notice']>()
+  const [oauthPrompt, setOAuthPrompt] = useState<Extract<ProviderAuthorizationFrame, { type: 'prompt' }>>()
+  const [oauthAnswer, setOAuthAnswer] = useState('')
+  const oauthStream = useRef<ReturnType<ModelsOperations['authorizeProvider']>>()
+  useEffect(() => () => { oauthStream.current?.dispose() }, [])
   const { onBusyChange } = props
-  useEffect(() => { onBusyChange?.(busy || listBusy) }, [busy, listBusy, onBusyChange])
+  useEffect(() => { onBusyChange?.(busy || listBusy || oauthBusy) }, [busy, listBusy, oauthBusy, onBusyChange])
   const [failure, setFailure] = useState<string | undefined>(undefined)
   // A settings success advances both retry baselines immediately. Keeping the
   // derived fields in the draft prevents a pushed namespace refresh from
@@ -195,7 +207,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const root = useMemo(() => schema.rehydrate(namespace.schema), [namespace.schema, schema])
   const node = useMemo(() => schema.nodeAtPath(root, settingsPath), [root, schema, settingsPath])
   const fallback = schema.getPath(namespace.value, settingsPath)
-  const disabled = props.readOnly || busy
+  const disabled = props.readOnly || busy || oauthBusy
   const layout = layoutOf(namespace.ns)
   const keyRef = refFor(schema, namespace, settingsPath, props.provider)
   // The same schema read the create card makes, so the choices offered here
@@ -220,6 +232,50 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     setDraft(current => value === undefined
       ? schema.deletePath(current, [key])
       : schema.setPath(current, [key], value))
+  }
+  const nativeAuthentication = stringAt(fallback, 'apiKeyEnv') === undefined ? props.nativeAuth : undefined
+  const oauthConfigured = props.authorization?.configured === true || oauthStatus === 'authorized'
+  const startAuthorization = (authorization: ProviderAuthorization, method: string): void => {
+    const stream = operations.authorizeProvider(authorization.key, method)
+    oauthStream.current = stream
+    setOAuthBusy(true)
+    setOAuthFailure(undefined)
+    setOAuthStatus(undefined)
+    setOAuthNotice(undefined)
+    setOAuthPrompt(undefined)
+    void (async () => {
+      for await (const frame of stream) {
+        switch (frame.type) {
+          case 'notice':
+            setOAuthNotice(frame.notice)
+            break
+          case 'prompt':
+            setOAuthPrompt(frame)
+            setOAuthAnswer(frame.prompt.kind === 'select' ? frame.prompt.options[0]?.id ?? '' : '')
+            break
+          case 'prompt-cancelled':
+            setOAuthPrompt(current => current?.id === frame.id ? undefined : current)
+            setOAuthAnswer('')
+            break
+          case 'outcome':
+            setOAuthStatus(frame.status)
+            void (frame.status === 'authorized' && props.onAuthorized?.())
+            break
+        }
+      }
+    })().catch((error: unknown) => {
+      setOAuthFailure(error instanceof Error ? error.message : String(error))
+    }).finally(() => {
+      setOAuthBusy(false)
+      setOAuthPrompt(undefined)
+      setOAuthAnswer('')
+      oauthStream.current = undefined
+    })
+  }
+  const cancelAuthorization = (): void => {
+    oauthStream.current?.dispose()
+    setOAuthStatus('cancelled')
+    setOAuthNotice(undefined)
   }
 
   // The model list is validated by the same per-row checker for both families,
@@ -370,7 +426,9 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     // route. Without one, a catalog route authenticates the way the directory
     // reports, and a declared route sends no key at all.
     const namedRef = stringAt(fallback, 'apiKeyEnv')
-    const nativeAuth = namedRef === undefined ? props.nativeAuth : undefined
+    const nativeAuth = nativeAuthentication
+    const authorization = props.authorization
+    const oauthMethods = authorization?.methods.filter(method => method.id === 'oauth') ?? []
     // Display method-neutral references without changing the adapter's lookup.
     const authRefs = namedRef === undefined
       ? (nativeAuth?.env ?? []).filter(ref => !endpointEnv.includes(ref)) : [namedRef]
@@ -415,6 +473,61 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     }
     return (
       <>
+        {nativeAuth?.oauth === true && (oauthMethods.length > 0 || nativeAuth.env.length === 0)
+          ? <div className={styles['field']}>
+            <span className={styles['fieldLabel']}>{t('oauthSignIn')}</span>
+            <p className={styles[oauthConfigured ? 'savedNotice' : 'advancedHint']} role="status" aria-live="polite">
+              {t(oauthConfigured ? 'oauthSignedIn' : oauthBusy ? 'oauthWaiting' : oauthStatus === 'cancelled' ? 'oauthCancelled' : 'oauthHint')}
+            </p>
+            <div className={styles['oauthActions']}>
+              {authorization === undefined ? null : oauthMethods.map(method => <button
+                key={method.id}
+                type="button"
+                className={styles['secondaryButton']}
+                disabled={disabled || authorization.inFlight}
+                onClick={() => { startAuthorization(authorization, method.id) }}
+              >{method.label}</button>)}
+              {oauthBusy ? <button type="button" className={styles['secondaryButton']} onClick={cancelAuthorization}>{t('cancel')}</button> : null}
+            </div>
+            {props.authorization === undefined ? <p className={styles['advancedHint']}>{t('oauthUnavailable')}</p> : null}
+            {oauthBusy && oauthNotice !== undefined
+              ? <div className={styles['oauthNotice']} role="status">
+                <p className={styles['advancedHint']}>{oauthNotice.message}</p>
+                {oauthNotice.url === undefined ? null : <a className={styles['oauthLink']} href={oauthNotice.url} target="_blank" rel="noopener noreferrer">{t('oauthOpen')}</a>}
+                {oauthNotice.code === undefined ? null : <code className={styles['oauthCode']}>{oauthNotice.code}</code>}
+              </div>
+              : null}
+            {oauthPrompt === undefined
+              ? null
+              : <form className={styles['field']} onSubmit={(event) => {
+                event.preventDefault()
+                oauthStream.current?.send({ id: oauthPrompt.id, value: oauthAnswer })
+                setOAuthPrompt(undefined)
+                setOAuthAnswer('')
+              }}>
+                <label className={styles['fieldLabel']} htmlFor={`${props.provider}-oauth-answer`}>{oauthPrompt.prompt.message}</label>
+                {oauthPrompt.prompt.kind === 'select'
+                  ? <select
+                    id={`${props.provider}-oauth-answer`}
+                    className={`${styles['input']} ${styles['selectInput']}`}
+                    value={oauthAnswer}
+                    onChange={(event) => { setOAuthAnswer(event.target.value) }}
+                  >{oauthPrompt.prompt.options.map(option => <option key={option.id} value={option.id}>{option.label}{option.description === undefined ? '' : ` — ${option.description}`}</option>)}</select>
+                  : <input
+                    id={`${props.provider}-oauth-answer`}
+                    className={styles['input']}
+                    type={oauthPrompt.prompt.kind === 'secret' ? 'password' : 'text'}
+                    autoComplete="off"
+                    autoFocus
+                    placeholder={oauthPrompt.prompt.placeholder}
+                    value={oauthAnswer}
+                    onChange={(event) => { setOAuthAnswer(event.target.value) }}
+                  />}
+                <div className={styles['oauthActions']}><button type="submit" className={styles['primaryButton']}>{t('oauthContinue')}</button></div>
+              </form>}
+            {oauthFailure === undefined ? null : <p className={styles['error']} role="alert">{oauthFailure}</p>}
+          </div>
+          : null}
         {keylessNativeAuth
           ? null
           : <div className={styles['field']}>
@@ -569,13 +682,14 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
         t={t}
         busy={busy}
         submitDisabled={disabled || layout === 'unknown'
+          || (nativeAuthentication?.oauth === true && nativeAuthentication.env.length === 0 && !oauthConfigured)
           || (props.credentialOnly !== true && modelFailure !== undefined)
           || shownKeyFailure !== undefined
           || (props.credentialRequired === true && keyValue.length === 0)}
         submitLabelKey={props.submitLabelKey ?? 'apply'}
         submitBusyLabelKey={props.submitBusyLabelKey ?? 'applying'}
         {...props.cancelLabelKey === undefined ? {} : { cancelLabelKey: props.cancelLabelKey }}
-        onCancel={() => { props.onClose(false) }}
+        onCancel={() => { cancelAuthorization(); props.onClose(false) }}
         onSubmit={() => { props.onSubmitCredential?.(); void apply() }}
       />
     </div>

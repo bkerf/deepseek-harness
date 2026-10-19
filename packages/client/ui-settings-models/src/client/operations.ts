@@ -32,6 +32,8 @@ export type ModelDiscoveryOutcome =
 
 /** The Host operations the Models page and its cards invoke. */
 export interface ModelsOperations {
+  /** Start a provider's credential authorization using its declared method. */
+  authorizeProvider: ClientContext['remote']['credentials']['authorize']
   /**
    * Store one credential literal under its reference.
    * @param ref - credential reference name.
@@ -75,6 +77,7 @@ export interface ModelsOperations {
  */
 export function createModelsOperations(ctx: ClientContext): ModelsOperations {
   return {
+    authorizeProvider: (key, method, signal) => ctx.remote.credentials.authorize(key, method, signal),
     storeCredential: async (ref, value) => {
       const response = await ctx.remote.credentials.set(ref, value)
       return response.ok ? undefined : response.error.message

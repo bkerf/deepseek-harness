@@ -115,7 +115,7 @@ interface CatalogDraft {
 /** Values that vary around the shared provider-editor rendering. */
 interface ProviderEditorRenderProps extends Pick<
   ProviderEditorProps,
-  'namespace' | 'schema' | 'operations' | 't' | 'readOnly' | 'onClose'
+  'namespace' | 'schema' | 'operations' | 't' | 'readOnly' | 'onClose' | 'onAuthorized'
 > {
   target: EditorTarget
   row: ProviderRow
@@ -134,6 +134,7 @@ function renderProviderEditor({ target, row, ...props }: ProviderEditorRenderPro
       {...target.nativeAuth === undefined ? {} : { nativeAuth: target.nativeAuth }}
       {...row.credential === undefined ? {} : { credential: row.credential }}
       {...row.credentialChecks === undefined ? {} : { credentialChecks: row.credentialChecks }}
+      {...row.authorization === undefined ? {} : { authorization: row.authorization }}
       {...props}
     />
   )
@@ -194,7 +195,7 @@ export function needsSetup(row: ProviderRow, anyUsable: boolean): boolean {
 function keyConfiguredOf(row: ProviderRow): boolean {
   return row.apiKeyEnv !== undefined
     ? row.credential?.configured === true
-    : row.derivedCredential?.configured === true
+    : row.derivedCredential?.configured === true || row.authorization?.configured === true
 }
 
 function targetOf(row: ProviderRow): EditorTarget {
@@ -445,6 +446,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                   operations,
                   t,
                   readOnly: !state.writable,
+                  onAuthorized: () => { void controller.load() },
                   onClose: (changed) => { closeSetup(changed, target) },
                 })}
                 {renderSlot(
@@ -456,10 +458,9 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             )
           }
           const open = !addOpen && editing?.provider === row.entry.provider
-          const credentialConfigured = row.credential?.configured === true
+          const credentialConfigured = row.credential?.configured === true || row.authorization?.configured === true
           const credentialMissing = !credentialConfigured
-            && row.apiKeyEnv !== undefined
-            && row.credential?.configured === false
+            && ((row.apiKeyEnv !== undefined && row.credential?.configured === false) || row.authorization?.configured === false)
           return (
             <li key={row.entry.provider} className={styles['rowCard']}>
               <div className={styles['rowHead']}>
@@ -485,8 +486,8 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                       <span
                         className={`${styles['credentialDot']} ${styles['credentialDotConfigured']}`}
                         role="img"
-                        aria-label={t('credentialConfigured')}
-                        title={t('credentialConfigured')}
+                        aria-label={t(row.authorization?.configured === true ? 'oauthSignedIn' : 'credentialConfigured')}
+                        title={t(row.authorization?.configured === true ? 'oauthSignedIn' : 'credentialConfigured')}
                       />
                     )
                     : credentialMissing
@@ -494,8 +495,8 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                         <span
                           className={`${styles['credentialDot']} ${styles['credentialDotMissing']}`}
                           role="img"
-                          aria-label={t('credentialMissing')}
-                          title={t('credentialMissing')}
+                          aria-label={t(row.authorization === undefined ? 'credentialMissing' : 'oauthSignedOut')}
+                          title={t(row.authorization === undefined ? 'credentialMissing' : 'oauthSignedOut')}
                         />
                       )
                       : null}
@@ -558,6 +559,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                   operations,
                   t,
                   readOnly: !state.writable,
+                  onAuthorized: () => { void controller.load() },
                   onClose: (changed) => { closeEditor(changed, target) },
                 })
                 : null}
@@ -648,8 +650,10 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                       {...draft.target.baseURLEnv === undefined ? {} : { baseURLEnv: draft.target.baseURLEnv }}
                       {...draft.target.nativeAuth === undefined ? {} : { nativeAuth: draft.target.nativeAuth }}
                       {...addRow?.credentialChecks === undefined ? {} : { credentialChecks: addRow.credentialChecks }}
+                      {...addRow?.authorization === undefined ? {} : { authorization: addRow.authorization }}
                       t={t}
                       readOnly={!state.writable}
+                      onAuthorized={() => { void controller.load() }}
                       onClose={(changed) => { closeEditor(changed, draft.target) }}
                       onBusyChange={setCatalogBusy}
                     />
