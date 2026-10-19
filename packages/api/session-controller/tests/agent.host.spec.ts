@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { ServiceTierId } from '@deepseek-ai/dsh-llm'
 import { agentPresetProjectionDefinition } from '@deepseek-ai/dsh-agent-preset-registry'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionLogOffset, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionHeader } from '@deepseek-ai/dsh-session'
@@ -299,12 +300,13 @@ describe('ApiSession model selection', () => {
     const { ctx, agents } = await harness()
     const logged = agent(ctx, header('logged-model'))
     logged.session.append('request/header', {
-      header: { config: { provider: 'logged-provider', model: 'logged-model' } },
+      header: { config: { provider: 'logged-provider', model: 'logged-model', serviceTier: ServiceTierId('priority') } },
       reason: 'initial',
     })
     expect(agents.selectionFor(logged).current).toEqual({
       provider: 'logged-provider',
       model: 'logged-model',
+      serviceTier: 'priority',
     })
 
     const pending = agent(ctx, header('pending-model'))
@@ -313,18 +315,20 @@ describe('ApiSession model selection', () => {
       provider: 'selected-provider',
       model: 'selected-model',
       reasoningEffort: 'high' as never,
+      serviceTier: ServiceTierId('priority'),
     })
     expect(selection.current).toMatchObject({
       provider: 'selected-provider', model: 'selected-model', reasoningEffort: 'high',
     })
-    expect(agents.consumeSelection(pending, 'other-provider', 'selected-model', 'high')).toBe(false)
-    expect(agents.consumeSelection(pending, 'selected-provider', 'other-model', 'high')).toBe(false)
-    expect(agents.consumeSelection(pending, 'selected-provider', 'selected-model', 'low')).toBe(false)
-    expect(agents.consumeSelection(pending, 'selected-provider', 'selected-model', 'high')).toBe(true)
+    expect(agents.consumeSelection(pending, 'other-provider', 'selected-model', 'high', 'priority')).toBe(false)
+    expect(agents.consumeSelection(pending, 'selected-provider', 'other-model', 'high', 'priority')).toBe(false)
+    expect(agents.consumeSelection(pending, 'selected-provider', 'selected-model', 'low', 'priority')).toBe(false)
+    expect(agents.consumeSelection(pending, 'selected-provider', 'selected-model', 'high', 'default')).toBe(false)
+    expect(agents.consumeSelection(pending, 'selected-provider', 'selected-model', 'high', 'priority')).toBe(true)
     expect(selection.current).toEqual({ provider: 'fixture', model: 'fixture-model' })
 
     const untouched = agent(ctx, header('uninstalled-model'))
-    expect(agents.consumeSelection(untouched, 'fixture', 'fixture-model', undefined)).toBe(false)
+    expect(agents.consumeSelection(untouched, 'fixture', 'fixture-model', undefined, undefined)).toBe(false)
   })
 })
 

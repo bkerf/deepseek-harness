@@ -6,7 +6,7 @@
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { MessageId, ToolCallId, ProviderRequestId, ReasoningEffortId } from './brand.ts'
+import type { MessageId, ToolCallId, ProviderRequestId, ReasoningEffortId, ServiceTierId } from './brand.ts'
 import type { Message, UserMessage } from './message.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -394,6 +394,8 @@ export interface LlmReasoningEffortInfo {
   name: string
   /** Optional user-facing distinction from otherwise similar efforts. */
   description?: string
+  /** Whether this adapter can execute the effort; omission means selectable. */
+  selectable?: boolean
 }
 
 /** Selectable reasoning efforts for one exact provider/model route. */
@@ -426,6 +428,19 @@ export type SystemPromptUpdate = 'in-history'
  */
 export type ToolUpdate = 'in-history' | 'addition-only'
 
+/** One adapter-owned service tier, independent of reasoning effort. */
+export interface LlmServiceTierInfo {
+  id: ServiceTierId
+  name: string
+  description?: string
+}
+
+/** Selectable service tiers for one exact provider/model route. */
+export interface LlmModelServiceTiersInfo {
+  tiers: readonly LlmServiceTierInfo[]
+  defaultTier?: ServiceTierId
+}
+
 /** Exact-route model metadata resolved by its owning adapter. */
 export interface LlmResolvedModelInfo extends LlmModelInfo {
   /** Provider-owned context capacity when known. */
@@ -434,6 +449,8 @@ export interface LlmResolvedModelInfo extends LlmModelInfo {
   defaultMaxTokens?: number
   /** Adapter-owned selectable reasoning levels when exposed. */
   reasoning?: LlmModelReasoningInfo
+  /** Adapter-owned service tiers offered for this model and account. */
+  serviceTiers?: LlmModelServiceTiersInfo
   /** Declared mid-conversation system prompt handling; absent means only a leading system message is read. */
   systemPromptUpdate?: SystemPromptUpdate
   /** Declared mid-conversation tool declaration handling; absent means every request declares the complete tool list. */
@@ -534,6 +551,8 @@ export interface GenerateOptions {
   model: string
   /** Adapter-owned reasoning effort selected for this exact model. */
   reasoningEffort?: ReasoningEffortId
+  /** Adapter-owned service tier selected independently of reasoning effort. */
+  serviceTier?: ServiceTierId
   /**
    * Ordered conversation messages, exactly as the provider sees them. A
    * loop-built request passes the derived history (dsh-agent-loop), whose

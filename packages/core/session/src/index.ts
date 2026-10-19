@@ -252,10 +252,11 @@ function assertCurrentLlmShape(event: Record<string, unknown>, index: number): v
     const config = headerRecord['config']
     if (!hasProviderModel(config)) throw new Error(`seed request/header at index ${index} lacks provider/model`)
     const configRecord = config as Record<string, unknown>
-    const reasoningEffort = configRecord['reasoningEffort']
-    if (reasoningEffort !== undefined
-      && (typeof reasoningEffort !== 'string' || reasoningEffort.length === 0)) {
-      throw new Error(`seed request/header at index ${index} has an invalid reasoningEffort`)
+    for (const field of ['reasoningEffort', 'serviceTier']) {
+      const value = configRecord[field]
+      if (value !== undefined && (typeof value !== 'string' || value.length === 0)) {
+        throw new Error(`seed request/header at index ${index} has an invalid ${field}`)
+      }
     }
     assertAdapterDefaults(headerRecord['adapterDefaults'], configRecord, index)
     const reason = record?.['reason']

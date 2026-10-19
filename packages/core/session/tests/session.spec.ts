@@ -542,13 +542,15 @@ describe('Session', () => {
     expect(Session.create(SessionId('reasoning-effort'), [valid]).snapshotEvents()[0])
       .toEqual(valid)
 
-    for (const reasoningEffort of ['', 1]) {
-      const invalid = structuredClone(valid) as SessionEvent
-      if (invalid.type !== 'request/header') throw new Error('test fixture must be a request header')
-      const config = invalid.data.header.config as unknown as Record<string, unknown>
-      config.reasoningEffort = reasoningEffort
-      expect(() => Session.create(SessionId('invalid-reasoning-effort'), [invalid]))
-        .toThrow('seed request/header at index 0 has an invalid reasoningEffort')
+    for (const field of ['reasoningEffort', 'serviceTier']) {
+      for (const value of ['', 1]) {
+        const invalid = structuredClone(valid) as SessionEvent
+        if (invalid.type !== 'request/header') throw new Error('test fixture must be a request header')
+        const config = invalid.data.header.config as unknown as Record<string, unknown>
+        config[field] = value
+        expect(() => Session.create(SessionId(`invalid-${field}`), [invalid]))
+          .toThrow(`seed request/header at index 0 has an invalid ${field}`)
+      }
     }
   })
 

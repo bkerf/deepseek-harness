@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, { createUserMessage, ToolCallId, LlmError, ReasoningEffortId, StreamChunk, expandAssistantStream } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, ToolCallId, LlmError, ReasoningEffortId, ServiceTierId, StreamChunk, expandAssistantStream } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId, TurnEndReason } from '@deepseek-ai/dsh-session'
@@ -308,13 +308,14 @@ describe('agent loop', () => {
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(
       SessionId('configured-reasoning-effort'),
-      { provider: 'mock', model: 'mock', reasoningEffort: effort },
+      { provider: 'mock', model: 'mock', reasoningEffort: effort, serviceTier: ServiceTierId('priority') },
     )
 
     send(agent, 'use the configured reasoning effort')
     await waitForIdle(ctx, agent)
 
     expect(adapter.requests[0]?.reasoningEffort).toBe(effort)
+    expect(adapter.requests[0]?.serviceTier).toBe(ServiceTierId('priority'))
   })
 
   it('validates reasoning effort in declarative agent config', () => {

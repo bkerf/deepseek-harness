@@ -43,6 +43,7 @@
     "@deepseek-ai/dsh-brand": "workspace:*",
     "@deepseek-ai/dsh-util-values": "workspace:*",
     "@deepseek-ai/schemastery": "workspace:~",
+    "zod": "4.4.3",
     "@earendil-works/pi-ai": "^1.1.0"
   },
   "devDependencies": {

@@ -9,6 +9,7 @@ import {
   createUserMessage,
   type LlmCallConfig,
   type ReasoningEffortId,
+  type ServiceTierId,
 } from '@deepseek-ai/dsh-llm'
 import type { PreStepDecision } from './runtime-types.ts'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
@@ -26,6 +27,8 @@ export interface ModelSelection {
   model: string
   /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
   reasoningEffort?: ReasoningEffortId
+  /** Adapter-owned service tier, or provider/default behavior when absent. */
+  serviceTier?: ServiceTierId
 }
 
 /** Mutable model selection plus the value captured for the current step. */
@@ -99,7 +102,7 @@ export function installModelSelection(agentCtx: Context, selection: ModelSelecti
       const resolved = await next()
       const selected = selection.assembled
       if (selected === undefined) return resolved
-      const { reasoningEffort: _inheritedEffort, ...withoutInheritedEffort } = resolved
+      const { reasoningEffort: _inheritedEffort, serviceTier: _inheritedTier, ...withoutInheritedEffort } = resolved
       return {
         ...withoutInheritedEffort,
         provider: selected.provider,
@@ -107,6 +110,7 @@ export function installModelSelection(agentCtx: Context, selection: ModelSelecti
         ...selected.reasoningEffort === undefined
           ? {}
           : { reasoningEffort: selected.reasoningEffort },
+        ...selected.serviceTier === undefined ? {} : { serviceTier: selected.serviceTier },
       }
     },
   )

@@ -835,6 +835,7 @@ export class LlmRuntime extends TypertRemoteService {
       ...defaultMaxTokens === undefined ? {} : { defaultMaxTokens },
       ...resolved.systemPromptUpdate === undefined ? {} : { systemPromptUpdate: resolved.systemPromptUpdate },
       ...resolved.toolUpdate === undefined ? {} : { toolUpdate: resolved.toolUpdate },
+      ...resolved.serviceTiers === undefined ? {} : { serviceTiers: structuredClone(resolved.serviceTiers) },
     }
     const reasoning = resolved.reasoning
     if (reasoning === undefined) return info
@@ -864,6 +865,7 @@ export class LlmRuntime extends TypertRemoteService {
         id: effort.id,
         name: effort.name,
         ...effort.description === undefined ? {} : { description: effort.description },
+        ...effort.selectable === undefined ? {} : { selectable: effort.selectable },
       }
     })
     if (reasoning.defaultEffort !== undefined && !seen.has(reasoning.defaultEffort)) {
@@ -925,7 +927,7 @@ export class LlmRuntime extends TypertRemoteService {
     } else {
       const effective = requested ?? reasoning.defaultEffort
       if (effective !== undefined) {
-        if (!reasoning.efforts.some(effort => effort.id === effective)) {
+        if (!reasoning.efforts.some(effort => effort.id === effective && effort.selectable !== false)) {
           throw new LlmError(
             `provider "${config.provider}" model "${config.model}" does not support reasoning effort "${effective}"`,
             'UNSUPPORTED_REASONING_EFFORT',

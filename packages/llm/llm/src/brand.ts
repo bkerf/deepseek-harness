@@ -74,3 +74,15 @@ export type ReasoningEffortId = Branded<'ReasoningEffortId'>
 export function ReasoningEffortId(id: string): ReasoningEffortId {
   return brandString<ReasoningEffortId>(id)
 }
+
+/** Adapter-owned identifier for one model's selectable service tier. */
+export type ServiceTierId = Branded<'ServiceTierId'>
+
+/**
+ * Brand an adapter-owned service-tier identifier.
+ * @param id - the opaque identifier exposed by one model capability.
+ * @returns the same string with the service-tier brand.
+ */
+export function ServiceTierId(id: string): ServiceTierId {
+  return brandString<ServiceTierId>(id)
+}

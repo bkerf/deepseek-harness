@@ -34,6 +34,27 @@ export interface ModelDirectoryState {
   error: string | null
 }
 
+export function selectionForModel(
+  provider: string,
+  model: ModelProviderGroup['models'][number],
+  current: ModelSelection | null,
+): ModelSelection {
+  const defaultEffort = model.reasoning?.efforts.some(effort =>
+    effort.id === model.reasoning?.defaultEffort && effort.selectable === false) === true
+    ? undefined : model.reasoning?.defaultEffort
+  const reasoningEffort = model.reasoning?.efforts.some(effort =>
+    effort.id === current?.reasoningEffort && effort.selectable !== false) === true
+    ? current?.reasoningEffort : defaultEffort
+  const serviceTier = model.serviceTiers?.tiers.some(tier => tier.id === current?.serviceTier) === true
+    ? current?.serviceTier : model.serviceTiers?.defaultTier
+  return {
+    provider,
+    model: model.id,
+    ...reasoningEffort === undefined ? {} : { reasoningEffort },
+    ...serviceTier === undefined ? {} : { serviceTier },
+  }
+}
+
 /** One session's shared directory controller; disposed with the session scope. */
 export class ModelDirectory {
   /** The shared snapshot both entries render from (uSES-safe store). */
@@ -102,6 +123,7 @@ export class ModelDirectory {
       ...selection.reasoningEffort === undefined
         ? {}
         : { reasoningEffort: selection.reasoningEffort },
+      ...selection.serviceTier === undefined ? {} : { serviceTier: selection.serviceTier },
     })
     if (this.disposed || generation !== this.generation) {
       return result.ok ? { ok: true, value: undefined } : result

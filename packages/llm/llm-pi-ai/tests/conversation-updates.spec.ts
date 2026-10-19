@@ -53,7 +53,14 @@ describe('conversation capability mapping', () => {
 afterEach(closeMockServers)
 
 async function send(provider: string, modelId: string, options: Omit<GenerateOptions, 'provider' | 'model'>, apiKey = 'fixture-key') {
-  const server = await mockServer([{ status: 401, body: JSON.stringify({ error: { message: 'fixture rejection' } }) }])
+  const server = await mockServer([
+    ...provider === 'openai-codex' ? [{ body: JSON.stringify({ models: [{
+      slug: modelId, display_name: modelId, visibility: 'list',
+      supported_reasoning_levels: [{ effort: 'high', description: 'High' }], default_reasoning_level: 'high',
+      context_window: 272000,
+    }] }) }] : [],
+    { status: 401, body: JSON.stringify({ error: { message: 'fixture rejection' } }) },
+  ])
   const ctx = new Context()
   const runtime = ctx.plugin(LlmRuntime)
   try {
@@ -68,7 +75,7 @@ async function send(provider: string, modelId: string, options: Omit<GenerateOpt
     const dispose = ctx.llm.registerAdapter([provider], adapter)
     try {
       const result = await assemble(ctx, { provider, model: modelId, ...options })
-      return { result, requests: server.requests, paths: server.paths }
+      return { result, requests: server.requests.filter(request => request !== undefined), paths: server.paths }
     } finally { dispose() }
   } finally { await runtime.dispose() }
 }

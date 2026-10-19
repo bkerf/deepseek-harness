@@ -782,6 +782,7 @@ describe('LlmRuntime', () => {
       efforts: [
         { id: ReasoningEffortId('standard'), name: 'Standard' },
         { id: ReasoningEffortId('ultra'), name: 'Ultra', description: 'Largest budget' },
+        { id: ReasoningEffortId('native-only'), name: 'Native only', selectable: false },
       ],
       defaultEffort: ReasoningEffortId('standard'),
     }
@@ -808,6 +809,9 @@ describe('LlmRuntime', () => {
     })
     const explicit = { provider: 'route', model: 'model', reasoningEffort: ReasoningEffortId('ultra') }
     await expect(ctx.llm.resolveCallConfig(explicit)).resolves.toBe(explicit)
+    await expect(ctx.llm.resolveCallConfig({
+      provider: 'route', model: 'model', reasoningEffort: ReasoningEffortId('native-only'),
+    })).rejects.toMatchObject({ code: 'UNSUPPORTED_REASONING_EFFORT' })
     const providerDefault = { provider: 'route', model: 'providerDefault' }
     await expect(ctx.llm.resolveCallConfig(providerDefault)).resolves.toBe(providerDefault)
   })

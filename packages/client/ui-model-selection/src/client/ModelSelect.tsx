@@ -41,15 +41,18 @@ import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/d
 import type { ModelLabelOwner, ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 import { orderModelProviders } from './provider-order.ts'
+import { selectionForModel } from './directory.ts'
 
 /** Which pane the dropdown shows: the two-row root or one drilled-in list. */
-type Pane = 'root' | 'model' | 'effort'
+type Pane = 'root' | 'model' | 'effort' | 'tier'
 
 /** One dynamic effort row; undefined means preserve the provider default. */
 interface EffortChoice {
   key: string
   effort: string | undefined
   label: string
+  disabled: boolean
+  hint?: string
 }
 
 /** Unplaced portal card: hidden but laid out at a fixed origin so offsetWidth/offsetHeight are real (Menu primitive's measure pass). */
@@ -103,21 +106,14 @@ export function ModelSelect(
     group.models.map(model => ({
       group,
       model,
-      selection: {
-        provider: group.id,
-        model: model.id,
-        ...model.reasoning?.defaultEffort === undefined
-          ? {}
-          : { reasoningEffort: model.reasoning.defaultEffort },
-      } satisfies ModelSelection,
-    }))), [groups])
+      selection: selectionForModel(group.id, model, state.current),
+    }))), [groups, state.current])
   const showSearch = choices.length > 4
   const filteredGroups = useMemo(() => groups.map(group => ({
     ...group, models: rankByName(group.models, showSearch ? query.trim() : ''),
   })).filter(group => group.models.length > 0), [groups, query, showSearch])
-  const visibleModels = useMemo(() => filteredGroups.flatMap(group => group.models.map(model => ({
-    provider: group.id, model: model.id,
-  }))), [filteredGroups])
+  const visibleModels = useMemo(() => filteredGroups.flatMap(group => group.models.map(model =>
+    selectionForModel(group.id, model, state.current))), [filteredGroups, state.current])
   const currentVisibleIndex = visibleModels.findIndex(model =>
     model.provider === state.current?.provider && model.model === state.current.model)
   const activeModelIndex = Math.min(highlightedIndex ?? Math.max(0, currentVisibleIndex), visibleModels.length - 1)
@@ -126,6 +122,11 @@ export function ModelSelect(
     : choices.findIndex(c => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)
   const currentChoice = choices[selectedIndex]
   const reasoning = currentChoice?.model.reasoning
+  const serviceTiers = currentChoice?.model.serviceTiers
+  const effectiveTier = state.current?.serviceTier ?? serviceTiers?.defaultTier
+  const tierLabel = (tier: { id: string; name: string }): string => tier.id === 'default'
+    ? t('tier.standard') : tier.name
+  const effectiveTierLabel = serviceTiers?.tiers.find(tier => tier.id === effectiveTier)
   const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
   const effortLabel = currentChoice === undefined
     ? undefined
@@ -138,12 +139,14 @@ export function ModelSelect(
     ? []
     : [
       ...reasoning.defaultEffort === undefined
-        ? [{ key: 'provider-default', effort: undefined, label: t('effort.providerDefault') }]
+        ? [{ key: 'provider-default', effort: undefined, label: t('effort.providerDefault'), disabled: false }]
         : [],
       ...reasoning.efforts.map((effort: ModelReasoningEffort) => ({
         key: `effort:${effort.id}`,
         effort: effort.id,
         label: effort.name,
+        disabled: effort.selectable === false,
+        ...effort.selectable === false && effort.id === 'ultra' ? { hint: t('effort.codexNative') } : {},
       })),
     ], [reasoning, t])
   const { pending } = state
@@ -175,7 +178,7 @@ export function ModelSelect(
 
   // Pane switches unmount the focused row; restore focus inside the menu so
   // keyboard navigation remains available.
-  const paneFocus = useRef<'drill' | 'model' | 'effort' | null>(null)
+  const paneFocus = useRef<'drill' | Exclude<Pane, 'root'> | null>(null)
   const previousShowSearch = useRef(showSearch)
   useEffect(() => {
     const changedSearchMode = previousShowSearch.current !== showSearch
@@ -197,9 +200,9 @@ export function ModelSelect(
       ;(target ?? triggerRef.current)?.focus()
       return
     }
-    const cell = itemRefs.current[intent === 'effort' ? 1 : 0]
+    const cell = itemRefs.current[intent === 'effort' ? 1 : intent === 'tier' ? reasoning === undefined ? 1 : 2 : 0]
     ;(cell !== null && cell !== undefined && !cell.disabled ? cell : triggerRef.current)?.focus()
-  }, [open, pane, showSearch])
+  }, [open, pane, showSearch, reasoning])
 
   useEffect(() => {
     const viewport = groupsRef.current
@@ -288,7 +291,7 @@ export function ModelSelect(
   }
 
   const moveFocus = (offset: number): void => {
-    const items = itemRefs.current.filter(item => item !== null)
+    const items = itemRefs.current.filter((item): item is HTMLButtonElement => item !== null && !item.disabled)
     if (items.length === 0) return
     const active = items.findIndex(item => item === document.activeElement)
     // Focus outside the rows (the trigger, which keeps it while the menu
@@ -415,8 +418,17 @@ export function ModelSelect(
       provider: state.current.provider,
       model: state.current.model,
       ...effort === undefined ? {} : { reasoningEffort: effort },
+      ...state.current.serviceTier === undefined ? {} : { serviceTier: state.current.serviceTier },
     }
     submit(selection)
+  }
+
+  const chooseTier = (serviceTier: string): void => {
+    const current = state.current
+    const action = current === null ? undefined
+      : effectiveTier === serviceTier ? closeAfterSelection
+        : () => { submit({ ...current, serviceTier }) }
+    action?.()
   }
 
   const waiting = currentChoice === undefined && state.status === 'loading'
@@ -424,14 +436,17 @@ export function ModelSelect(
     ? t('trigger.loading')
     : currentChoice?.model.name
       ?? t('trigger.fallback')
-  const triggerLabel = effortLabel === undefined ? modelLabel : `${modelLabel} · ${effortLabel}`
-  const triggerAria = waiting
+  const fastLabel = effectiveTier === 'priority' ? t('tier.fast') : undefined
+  const triggerLabel = [modelLabel, effortLabel, fastLabel].filter(label => label !== undefined).join(' · ')
+  const triggerModelAria = waiting
     ? t('trigger.loading')
     : currentChoice === undefined
       ? t('trigger.selectAria')
       : effortLabel === undefined
         ? t('trigger.aria', { model: modelLabel })
         : t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
+  const triggerAria = fastLabel === undefined ? triggerModelAria
+    : t('trigger.ariaTier', { label: triggerModelAria, tier: fastLabel })
   const renderModelLabel = (
     provider: ModelLabelOwner['provider'], model: ModelLabelOwner['model'],
     placement: ModelLabelOwner['placement'], selected: boolean,
@@ -486,6 +501,7 @@ export function ModelSelect(
           {currentChoice === undefined ? modelLabel : renderModelLabel(currentChoice.group.provider, currentChoice.model, 'trigger', true)}
         </span>
         {effortLabel !== undefined && <span className={css.triggerEffort}>{effortLabel}</span>}
+        {fastLabel !== undefined && <span className={css.triggerEffort}>{fastLabel}</span>}
         {busy
           ? <StateDot state="ongoing" />
           : <IconChevronDownOutlineRegular className={clsx(css.chevron, open && css.chevronOpen)} />}
@@ -517,6 +533,13 @@ export function ModelSelect(
                 <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { drill('effort') }}>
                   <span className={css.cellLabel}>{t('menu.effort')}</span>
                   <span className={css.cellValue}>{effortLabel}</span>
+                  <IconChevronRightOutlineRegular className={css.cellChevron} />
+                </button>
+              )}
+              {serviceTiers !== undefined && serviceTiers.tiers.length > 0 && (
+                <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { drill('tier') }}>
+                  <span className={css.cellLabel}>{t('menu.speed')}</span>
+                  <span className={css.cellValue}>{effectiveTierLabel === undefined ? '' : tierLabel(effectiveTierLabel)}</span>
                   <IconChevronRightOutlineRegular className={css.cellChevron} />
                 </button>
               )}
@@ -603,7 +626,7 @@ export function ModelSelect(
                             key={model.id}
                             title={model.name}
                             disabled={busy}
-                            onClick={() => { choose({ provider: group.id, model: model.id }) }}
+                            onClick={() => { choose(selectionForModel(group.id, model, state.current)) }}
                           >
                             <span className={css.optionCopy}>
                               <span className={css.modelName}>{renderModelLabel(group.provider, model, 'option', selected)}</span>
@@ -644,12 +667,14 @@ export function ModelSelect(
                     aria-checked={effectiveEffort === level.effort}
                     className={clsx(css.option, effectiveEffort === level.effort && css.selected)}
                     key={level.key}
-                    disabled={busy}
+                    disabled={busy || level.disabled}
+                    title={level.hint}
                     onClick={() => { chooseEffort(level.effort) }}
                   >
                     <span className={css.optionCopy}>
                       <span className={css.modelName}>{level.label}</span>
                     </span>
+                    {level.hint === undefined ? null : <span className={css.cellValue}>{level.hint}</span>}
                     <span className={css.check}>
                       {pending !== null && pending.provider === state.current?.provider
                         && pending.model === state.current.model && pending.reasoningEffort === level.effort
@@ -660,6 +685,27 @@ export function ModelSelect(
                 ))}
             </>
           )}
+          {pane === 'tier' && serviceTiers?.tiers.map(tier => (
+            <button
+              ref={itemRef()}
+              type="button"
+              role="menuitemradio"
+              aria-checked={effectiveTier === tier.id}
+              className={clsx(css.option, effectiveTier === tier.id && css.selected)}
+              key={tier.id}
+              title={tier.description}
+              disabled={busy}
+              onClick={() => { chooseTier(tier.id) }}
+            >
+              <span className={css.optionCopy}><span className={css.modelName}>{tierLabel(tier)}</span></span>
+              <span className={css.check}>
+                {pending !== null && pending.provider === state.current?.provider
+                  && pending.model === state.current.model && pending.serviceTier === tier.id
+                  ? <StateDot state="ongoing" />
+                  : effectiveTier === tier.id ? <IconCheckOutlineRegular /> : null}
+              </span>
+            </button>
+          ))}
         </MenuSurface>,
         document.body,
       )}

@@ -50,6 +50,7 @@ import type {
   LlmModelInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
+  LlmDiscoveredModel,
   PreparedAdapterCall,
   ReasoningEffortId as ReasoningEffortIdType,
   ResolvedRetryPolicy,
@@ -58,7 +59,8 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
-import type { ResolvedPiAiProviderProfile } from './config.ts'
+import { resolveProfiles, type ResolvedPiAiProviderProfile } from './config.ts'
+import { CodexModelCatalog, type CodexCatalog } from './codex-catalog.ts'
 import { requestImageTarget, toPiContext } from './context.ts'
 import { conversationUpdates, createModels, getSupportedThinkingLevels } from './models.ts'
 import { toStreamChunks } from './stream.ts'
@@ -79,6 +81,7 @@ interface PiAiSnapshot {
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>
   /** Providers for exactly those profiles; never mutated once published. */
   models: Models
+  codex?: CodexCatalog
 }
 
 /** Constructor options for {@link PiAiAdapter}: the two resolution hooks the plugin owns. */
@@ -230,14 +233,14 @@ function requestHeaders(headers: Readonly<Record<string, string>> | undefined): 
  */
 export class PiAiAdapter extends LlmAdapter {
   private snapshot: PiAiSnapshot | undefined
+  private readonly codexCatalog = new CodexModelCatalog()
 
   constructor(private readonly config: PiAiAdapterOptions) {
     super()
   }
 
-  override imageRequestTarget(provider: string, model: string, image: ImageAttachmentRef) {
+  override imageRequestTarget(provider: string, _model: string, image: ImageAttachmentRef) {
     const snapshot = this.current()
-    this.modelOf(snapshot, provider, model)
     const profile = this.profileOf(snapshot, provider)
     return requestImageTarget(image, { maxPixels: profile.requestImagePixelBudget, maxBytes: profile.requestImageMaxBytes })
   }
@@ -274,7 +277,8 @@ export class PiAiAdapter extends LlmAdapter {
     const failure = profile.modelErrors.get(model)
       ?? (profile.piProvider === undefined ? profile.catalogError : undefined)
     if (failure !== undefined) throw new LlmError(failure, 'INVALID_CONFIG')
-    const resolved = snapshot.models.getModel(provider, model)
+    const resolved = provider === 'openai-codex' && snapshot.codex !== undefined
+      ? snapshot.codex.models.get(model)?.model : snapshot.models.getModel(provider, model)
     if (resolved === undefined) {
       throw new LlmError(`pi-ai provider "${provider}" has no configured model "${model}"`, 'UNKNOWN_MODEL')
     }
@@ -294,7 +298,7 @@ export class PiAiAdapter extends LlmAdapter {
 
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     return Promise.resolve().then(async () => {
-      const snapshot = this.current()
+      let snapshot = this.current()
       const profile = this.profileOf(snapshot, provider)
       try { await this.config.resolveApiKey(provider, profile) }
       catch (error) {
@@ -302,7 +306,10 @@ export class PiAiAdapter extends LlmAdapter {
         if (error instanceof LlmError && error.code === 'MISSING_CREDENTIAL') return []
         throw error
       }
-      return snapshot.models.getModels(provider).map(model => ({
+      snapshot = await this.withCodexCatalog(snapshot, provider)
+      const models = snapshot.codex === undefined
+        ? snapshot.models.getModels(provider) : [...snapshot.codex.models.values()].map(entry => entry.model)
+      return models.map(model => ({
         provider,
         id: model.id,
         name: model.name,
@@ -314,12 +321,34 @@ export class PiAiAdapter extends LlmAdapter {
   override resolveModel(
     provider: string,
     model: string,
-    _signal?: AbortSignal,
+    signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
-    return Promise.resolve().then(() => {
-      const snapshot = this.current()
+    return Promise.resolve().then(async () => {
+      const snapshot = await this.withCodexCatalog(this.current(), provider, signal)
       return this.modelInfo(snapshot, provider, model)
     })
+  }
+
+  /** The configuration surface uses the same signed-in catalog as the main model picker. */
+  async discoverCodexModels(signal?: AbortSignal): Promise<readonly LlmDiscoveredModel[]> {
+    const current = this.current()
+    const profiles = current.profiles.has('openai-codex') ? current.profiles : resolveProfiles({ 'openai-codex': {} })
+    const profile = this.profileOf({ ...current, profiles }, 'openai-codex')
+    const models = createModels(this.config.auth)
+    if (profile.piProvider === undefined) throw new LlmError('Codex model discovery requires a serviceable provider profile', 'INVALID_CONFIG')
+    models.setProvider(profile.piProvider)
+    const catalog = await this.codexCatalog.resolve(models, profile, await this.config.resolveApiKey('openai-codex', profile), signal)
+    return [...catalog.models.values()].map(({ model }) => ({
+      id: model.id, name: model.name, contextWindow: model.contextWindow, maxTokens: model.maxTokens,
+      inputModalities: [...model.input],
+    }))
+  }
+
+  private async withCodexCatalog(snapshot: PiAiSnapshot, provider: string, signal?: AbortSignal): Promise<PiAiSnapshot> {
+    const profile = this.profileOf(snapshot, provider)
+    if (provider !== 'openai-codex' || profile.api !== undefined || snapshot.codex !== undefined) return snapshot
+    const apiKey = await this.config.resolveApiKey(provider, profile)
+    return { ...snapshot, codex: await this.codexCatalog.resolve(snapshot.models, profile, apiKey, signal) }
   }
 
   private modelInfo(snapshot: PiAiSnapshot, provider: string, model: string): LlmResolvedModelInfo {
@@ -329,6 +358,9 @@ export class PiAiAdapter extends LlmAdapter {
     // Only a cap the deployment configured is a request default; the
     // catalog's `maxTokens` sizes the model and stops there.
     const configuredMaxTokens = profile.configuredMaxTokens.get(model)
+    const codexInfo = snapshot.codex?.models.get(model)?.info
+    const codexDefault = profile.reasoning === undefined ? codexInfo?.reasoning.defaultEffort
+      : codexInfo?.reasoning.efforts.some(effort => effort.id === profile.reasoning) ? ReasoningEffortId(profile.reasoning) : undefined
     return {
       provider,
       id: model,
@@ -338,11 +370,18 @@ export class PiAiAdapter extends LlmAdapter {
       ...configuredMaxTokens === undefined ? {} : { defaultMaxTokens: configuredMaxTokens },
       ...reasoningInfo(resolvedModel, defaultLevel),
       ...conversationUpdates(resolvedModel),
+      ...codexInfo,
+      ...codexInfo === undefined ? {} : {
+        reasoning: {
+          efforts: codexInfo.reasoning.efforts,
+          ...codexDefault === undefined ? {} : { defaultEffort: codexDefault },
+        },
+      },
     }
   }
 
-  override prepareCall(provider: string, model: string, _signal?: AbortSignal): Promise<PreparedAdapterCall> {
-    const snapshot = this.current()
+  override async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    const snapshot = await this.withCodexCatalog(this.current(), provider, signal)
     return Promise.resolve({
       model: this.modelInfo(snapshot, provider, model),
       stream: options => this.streamWithSnapshot(options, snapshot),
@@ -357,6 +396,7 @@ export class PiAiAdapter extends LlmAdapter {
     options: GenerateOptions,
     snapshot: PiAiSnapshot,
   ): AsyncIterable<StreamChunk> {
+    snapshot = await this.withCodexCatalog(snapshot, options.provider, options.signal)
     if (options.stop !== undefined) {
       throw new LlmError('llm-pi-ai does not support GenerateOptions.stop', 'UNSUPPORTED_OPTION')
     }
@@ -377,11 +417,20 @@ export class PiAiAdapter extends LlmAdapter {
     const request = needsPlaceholder
       ? { ...options, tools: [ANTHROPIC_TOOL_UPDATE_PLACEHOLDER, ...tools] }
       : options
-    const reasoning = resolveReasoningLevel(
+    const codexInfo = options.provider === 'openai-codex' ? snapshot.codex?.models.get(options.model)?.info : undefined
+    const reasoning = codexInfo === undefined ? resolveReasoningLevel(
       model,
       options.reasoningEffort ?? profile.reasoning,
-    )
-    const apiKey = await this.config.resolveApiKey(options.provider, profile)
+    ) : undefined
+    const codexEffort = options.reasoningEffort ?? profile.reasoning ?? codexInfo?.reasoning.defaultEffort
+    if (codexInfo !== undefined && codexEffort !== undefined
+      && !codexInfo.reasoning.efforts.some(effort => effort.id === codexEffort && effort.selectable !== false)) {
+      throw new LlmError(`Codex model "${model.id}" does not support reasoning effort "${codexEffort}"`, 'UNSUPPORTED_REASONING_EFFORT')
+    }
+    if (options.serviceTier !== undefined && !codexInfo?.serviceTiers.tiers.some(tier => tier.id === options.serviceTier)) {
+      throw new LlmError(`Model "${model.id}" does not support service tier "${options.serviceTier}"`, 'UNSUPPORTED_OPTION')
+    }
+    const apiKey = snapshot.codex?.apiKey ?? await this.config.resolveApiKey(options.provider, profile)
 
     const consumer = new AbortController()
     const upstream = options.signal === undefined
@@ -422,6 +471,15 @@ export class PiAiAdapter extends LlmAdapter {
         // Profile headers are deployment-owned; attribution names are
         // Harness-owned and therefore win collisions.
         headers: requestHeaders(profile.headers),
+        ...codexInfo === undefined ? {} : {
+          onPayload: (payload: unknown) => ({
+            ...payload as Record<string, unknown>,
+            ...codexEffort === undefined ? {} : {
+              reasoning: { ...(payload as { reasoning?: Record<string, unknown> }).reasoning, effort: codexEffort },
+            },
+            ...options.serviceTier === undefined ? {} : { service_tier: options.serviceTier },
+          }),
+        },
       })
       const iterator = toStreamChunks(events, model.contextWindow, options.signal, model.id)[Symbol.asyncIterator]()
       let exhausted = false

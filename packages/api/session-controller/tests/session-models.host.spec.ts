@@ -10,10 +10,10 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AttachmentStore from '@deepseek-ai/dsh-attachment'
-import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { LlmAdapter, ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions, LlmCallConfig, LlmCallConfigAdapterDefaults, LlmModelInfo,
-  LlmModelReasoningInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk,
+  LlmModelReasoningInfo, LlmModelServiceTiersInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk,
   UserMessage,
 } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
@@ -45,6 +45,7 @@ class CatalogAdapter extends LlmAdapter {
     private readonly models: readonly LlmModelInfo[] | Error,
     private readonly reasoning?: LlmModelReasoningInfo,
     private readonly exactError?: Error,
+    private readonly serviceTiers?: LlmModelServiceTiersInfo,
   ) {
     super()
   }
@@ -66,6 +67,7 @@ class CatalogAdapter extends LlmAdapter {
       id: model,
       name: model,
       ...this.reasoning === undefined ? {} : { reasoning: this.reasoning },
+      ...this.serviceTiers === undefined ? {} : { serviceTiers: this.serviceTiers },
     })
   }
 
@@ -157,6 +159,46 @@ function currentSelection(ctx: Context, sessionId: SessionId) {
 }
 
 describe('Web session model selection', () => {
+  it('keeps service tiers independent of reasoning and replaces Fast with Standard', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    onTestFinished(() => ctx.fiber.dispose())
+    const tiers = {
+      tiers: [
+        { id: ServiceTierId('default'), name: 'Standard' },
+        { id: ServiceTierId('priority'), name: 'Fast', description: 'Faster responses' },
+      ],
+      defaultTier: ServiceTierId('default'),
+    }
+    ctx.llm.registerAdapter(['subscription'], new CatalogAdapter('Subscription', [
+      { provider: 'subscription', id: 'model', name: 'Model' },
+    ], REASONING, undefined, tiers))
+    const remote = createSessionTestRemote(ctx, {
+      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }), cwd: '/tmp',
+    })
+    expect(expectValue(await remote.modelCatalog()).groups.find(group => group.id === 'subscription')?.models[0]?.serviceTiers)
+      .toEqual(tiers)
+    const signal = new AbortController().signal
+    for (const serviceTier of ['priority', 'default']) {
+      const selected = { provider: 'subscription', model: 'model', reasoningEffort: 'max', serviceTier }
+      expect(expectValue(await remote.selectModel({ sessionId, ...selected })).selected).toEqual(selected)
+      await ctx.systemPrompt.assemble()
+      const config = await agentEvents(ctx, agent).waterfall(
+        'agent/request', { turn: 1, step: 1, signal },
+        () => Promise.resolve({ provider: 'subscription', model: 'model', serviceTier: ServiceTierId('priority') }),
+      )
+      expect(config).toMatchObject(selected)
+      agent.session.append('request/header', { header: { config }, reason: 'change' })
+      expect(currentSelection(ctx, sessionId)).toEqual(selected)
+    }
+    const clearTier = { provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high' }
+    expect(expectValue(await remote.selectModel({ sessionId, ...clearTier })).selected).toEqual(clearTier)
+    await ctx.systemPrompt.assemble()
+    expect(await agentEvents(ctx, agent).waterfall(
+      'agent/request', { turn: 2, step: 1, signal },
+      () => Promise.resolve({ provider: 'subscription', model: 'model', serviceTier: ServiceTierId('priority') }),
+    )).toEqual(clearTier)
+  })
+
   it('validates an ordered image batch before persisting any member', async () => {
     const { ctx, agent, sessionId } = await harness()
     const validateImage = vi.fn((_input: { data: Uint8Array }) => Promise.resolve())
@@ -445,14 +487,17 @@ describe('Web session model selection', () => {
   })
 
   it('preserves optional catalog metadata and string provider failures', async () => {
-    const { ctx } = await harness()
+    const { ctx, sessionId } = await harness()
     ctx.llm.registerAdapter(['plain'], new CatalogAdapter('Plain', [
       { provider: 'plain', id: 'plain-model', name: 'Plain Model' },
     ]))
     ctx.llm.registerAdapter(['described-reasoning'], new CatalogAdapter('Described Reasoning', [
       { provider: 'described-reasoning', id: 'reasoning-model', name: 'Reasoning Model' },
     ], {
-      efforts: [{ id: ReasoningEffortId('high'), name: 'High', description: 'More thinking' }],
+      efforts: [
+        { id: ReasoningEffortId('high'), name: 'High', description: 'More thinking', selectable: true },
+        { id: ReasoningEffortId('ultra'), name: 'Ultra', description: 'Native multi-agent mode', selectable: false },
+      ],
     }))
     ctx.llm.registerAdapter(['string-failure'], new class extends CatalogAdapter {
       override listModels(): Promise<readonly LlmModelInfo[]> {
@@ -460,7 +505,7 @@ describe('Web session model selection', () => {
         return Promise.reject('string catalog failure')
       }
     }('String Failure', []))
-    createSessionTestRemote(ctx, {
+    const remote = createSessionTestRemote(ctx, {
       defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
       cwd: '/tmp',
     })
@@ -475,7 +520,10 @@ describe('Web session model selection', () => {
           id: 'reasoning-model',
           name: 'Reasoning Model',
           reasoning: {
-            efforts: [{ id: 'high', name: 'High', description: 'More thinking' }],
+            efforts: [
+              { id: 'high', name: 'High', description: 'More thinking', selectable: true },
+              { id: 'ultra', name: 'Ultra', description: 'Native multi-agent mode', selectable: false },
+            ],
           },
         }],
       },
@@ -483,6 +531,9 @@ describe('Web session model selection', () => {
     expect(catalog.failures).toContainEqual({
       id: 'string-failure', name: 'String Failure', message: 'string catalog failure',
     })
+    expect(await remote.selectModel({
+      sessionId, provider: 'described-reasoning', model: 'reasoning-model', reasoningEffort: 'ultra',
+    })).toMatchObject({ ok: false, error: { code: 'session/model-unavailable' } })
     await ctx.fiber.dispose()
   })
 

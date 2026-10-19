@@ -579,6 +579,8 @@ export class ReactLoopAgent implements Agent {
       ? persistedConfig.reasoningEffort
       : undefined
     const reasoningEffort = this.options.reasoningEffort ?? persistedReasoningEffort
+    const serviceTier = this.options.serviceTier ?? (persistedConfig?.provider === route.provider
+      && persistedConfig.model === route.model ? persistedConfig.serviceTier : undefined)
     const maxTokens = this.options.maxTokens
     const seedConfig = deepFreeze(structuredClone(
       this.requestHeaderLogged
@@ -587,6 +589,7 @@ export class ReactLoopAgent implements Agent {
         : {
           ...route,
           ...reasoningEffort === undefined ? {} : { reasoningEffort },
+          ...serviceTier === undefined ? {} : { serviceTier },
           ...maxTokens === undefined ? {} : { maxTokens },
         },
     ))

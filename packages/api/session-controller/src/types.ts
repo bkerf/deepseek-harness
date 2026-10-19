@@ -102,6 +102,7 @@ export interface ModelSelection {
   readonly provider: string
   readonly model: string
   readonly reasoningEffort?: string
+  readonly serviceTier?: string
 }
 
 /** Host fold state for durable model selection. */
@@ -125,6 +126,7 @@ export interface ModelReasoningEffort {
   readonly id: string
   readonly name: string
   readonly description?: string
+  readonly selectable?: boolean
 }
 
 /** Selectable reasoning metadata for one exact model route. */
@@ -133,12 +135,23 @@ export interface ModelReasoning {
   readonly defaultEffort?: string
 }
 
+/** Selectable service tiers for one exact model route. */
+export interface ModelServiceTiers {
+  readonly tiers: readonly {
+    readonly id: string
+    readonly name: string
+    readonly description?: string
+  }[]
+  readonly defaultTier?: string
+}
+
 /** One model displayed inside its provider group. */
 export interface ModelCatalogModel {
   readonly id: string
   readonly name: string
   readonly description?: string
   readonly reasoning?: ModelReasoning
+  readonly serviceTiers?: ModelServiceTiers
 }
 
 /** One provider and its successfully loaded model catalog. */

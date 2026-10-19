@@ -9,8 +9,8 @@ it('reads complete selections from volatile config and clears omitted reasoning 
   onTestFinished(() => ctx.fiber.dispose())
   const live = await liveConfig(ctx, DefaultModel, { provider: 'p', model: 'm' })
   const consumer = ctx.agentDefaultModel
-  await live.update({ provider: 'q', model: 'n', reasoningEffort: 'high' })
-  expect(consumer.currentSelection()).toEqual({ provider: 'q', model: 'n', reasoningEffort: 'high' })
+  await live.update({ provider: 'q', model: 'n', reasoningEffort: 'high', serviceTier: 'priority' })
+  expect(consumer.currentSelection()).toEqual({ provider: 'q', model: 'n', reasoningEffort: 'high', serviceTier: 'priority' })
   await live.replace({ provider: 'p', model: 'm' })
   expect(consumer.currentSelection()).toEqual({ provider: 'p', model: 'm' })
   await consumer.saveSelection({ provider: 'unsaved', model: 'unsaved' })
@@ -19,10 +19,10 @@ it('reads complete selections from volatile config and clears omitted reasoning 
 
 it('persists complete selections through its owning profile entry', async () => {
   const { configurationFixture } = await import('../../../settings/settings/tests/configuration-fixture.ts')
-  const { ReasoningEffortId } = await import('@deepseek-ai/dsh-llm')
+  const { ReasoningEffortId, ServiceTierId } = await import('@deepseek-ai/dsh-llm')
   const { ctx } = await configurationFixture({ hmr: false })
-  await ctx.agentDefaultModel.saveSelection({ provider: 'test', model: 'next', reasoningEffort: ReasoningEffortId('high') })
-  expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'next', reasoningEffort: 'high' })
+  await ctx.agentDefaultModel.saveSelection({ provider: 'test', model: 'next', reasoningEffort: ReasoningEffortId('high'), serviceTier: ServiceTierId('priority') })
+  expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'next', reasoningEffort: 'high', serviceTier: 'priority' })
   await ctx.agentDefaultModel.saveSelection({ provider: 'test', model: 'final' })
   expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'final' })
   const standalone = new Context()

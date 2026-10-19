@@ -10,7 +10,7 @@ import type { Volatile } from '@deepseek-ai/cordis'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-config-editor'
 
 declare module '@deepseek-ai/cordis' {
@@ -28,16 +28,19 @@ export interface Config {
   model: Volatile<string>
   /** Adapter-owned reasoning effort; omission follows the provider default. */
   reasoningEffort: Volatile<string | undefined>
+  /** Adapter-owned service tier; omission follows the provider default. */
+  serviceTier: Volatile<string | undefined>
 }
 
 /** Project stored settings onto the Agent-facing selection type. */
-function selection(settings: { provider: string; model: string; reasoningEffort?: string }): ModelSelection {
+function selection(settings: { provider: string; model: string; reasoningEffort?: string; serviceTier?: string }): ModelSelection {
   return {
     provider: settings.provider,
     model: settings.model,
     ...settings.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: ReasoningEffortId(settings.reasoningEffort) },
+    ...settings.serviceTier === undefined ? {} : { serviceTier: ServiceTierId(settings.serviceTier) },
   }
 }
 
@@ -52,6 +55,7 @@ export class AgentDefaultModelConfig extends Service {
     provider: z.string().required().volatile(),
     model: z.string().required().volatile(),
     reasoningEffort: z.string().volatile(),
+    serviceTier: z.string().volatile(),
   })
 
   constructor(private readonly ownerContext: Context, private config: Config) {
@@ -66,9 +70,11 @@ export class AgentDefaultModelConfig extends Service {
    */
   currentSelection(): ModelSelection {
     const reasoningEffort = this.config.reasoningEffort.get()
+    const serviceTier = this.config.serviceTier.get()
     return selection({
       provider: this.config.provider.get(), model: this.config.model.get(),
       ...reasoningEffort === undefined ? {} : { reasoningEffort },
+      ...serviceTier === undefined ? {} : { serviceTier },
     })
   }
 
@@ -87,6 +93,7 @@ export class AgentDefaultModelConfig extends Service {
     const config = {
       provider: next.provider, model: next.model,
       ...next.reasoningEffort === undefined ? {} : { reasoningEffort: String(next.reasoningEffort) },
+      ...next.serviceTier === undefined ? {} : { serviceTier: String(next.serviceTier) },
     }
     const saved = this.saves.then(() => editor.edit(entry, () => config))
     this.saves = saved.catch(() => {})
