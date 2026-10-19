@@ -9,12 +9,20 @@ import { DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, type ResolvedPiAiProviderPr
 // Codex filters its model catalog by client protocol version.
 const CODEX_CLIENT_VERSION = '0.162.0'
 
+const ULTRA_MULTI_AGENT_INSTRUCTIONS = 'Ultra proactive multi-agent delegation is active. '
+  + 'Decompose independent work and use the available subagent or subagent_fork tools in parallel when that can save time or improve quality. '
+  + 'Continue useful work while children run, and use send_message when coordination is needed. '
+  + 'Wait for the delegated results, integrate them, and verify the combined result before completing the task. '
+  + 'Follow user instructions and the available tools, configured delegation depth, and capacity budgets; '
+  + 'carry out work directly when those existing limits prevent delegation.'
+
 const catalogSchema = z.object({
   models: z.array(z.object({
     slug: z.string(), display_name: z.string(), description: z.string().nullish(),
     visibility: z.enum(['list', 'hide', 'none']),
     default_reasoning_level: z.string().nullish(),
     supported_reasoning_levels: z.array(z.object({ effort: z.string(), description: z.string() })),
+    multi_agent_reasoning_effort: z.string().nullish(),
     service_tiers: z.array(z.object({ id: z.string(), name: z.string(), description: z.string() })).default([]),
     default_service_tier: z.string().nullish(),
     input_modalities: z.array(z.enum(['text', 'image'])).default(['text', 'image']),
@@ -25,6 +33,7 @@ const catalogSchema = z.object({
 /** The transport descriptor and the exact capabilities advertised by its account. */
 export interface CodexCatalogModel {
   readonly model: Model<Api>
+  readonly resolveReasoningEffort: (selected: string) => string
   readonly info: Pick<LlmResolvedModelInfo, 'description'> & {
     readonly reasoning: NonNullable<LlmResolvedModelInfo['reasoning']>
     readonly serviceTiers: NonNullable<LlmResolvedModelInfo['serviceTiers']>
@@ -88,6 +97,14 @@ export class CodexModelCatalog {
     if (!response.ok) throw new LlmError(`Codex model catalog request failed (${response.status})`, 'DISCOVERY_FAILED')
     const catalog = catalogSchema.parse(await response.json())
     const entries = new Map(catalog.models.filter(entry => entry.visibility === 'list').map((entry) => {
+      const preferred = entry.multi_agent_reasoning_effort
+      // Codex 0.162 resolves Ultra in protocol/src/openai_models/reasoning_effort.rs.
+      const ultraEffort = preferred != null && preferred !== 'ultra'
+        && entry.supported_reasoning_levels.some(level => level.effort === preferred)
+        ? preferred
+        : entry.supported_reasoning_levels.find(level => level.effort === 'max')?.effort
+          ?? entry.supported_reasoning_levels.findLast(level => level.effort !== 'ultra')?.effort
+          ?? 'medium'
       const base = models.getModel('openai-codex', entry.slug)
       const model: Model<Api> = {
         ...base,
@@ -108,7 +125,7 @@ export class CodexModelCatalog {
             id: ReasoningEffortId(level.effort),
             name: `${level.effort.charAt(0).toUpperCase()}${level.effort.slice(1)}`,
             description: level.description,
-            ...level.effort === 'ultra' ? { selectable: false } : {},
+            ...level.effort === 'ultra' ? { instructions: ULTRA_MULTI_AGENT_INSTRUCTIONS } : {},
           })),
           ...entry.default_reasoning_level == null ? {} : { defaultEffort: ReasoningEffortId(entry.default_reasoning_level) },
         },
@@ -120,7 +137,10 @@ export class CodexModelCatalog {
           defaultTier: ServiceTierId(entry.default_service_tier ?? 'default'),
         },
       }
-      return [entry.slug, { model, info }] as const
+      return [entry.slug, {
+        model, info,
+        resolveReasoningEffort: (selected: string) => selected === 'ultra' ? ultraEffort : selected,
+      }] as const
     }))
     return { models: entries, apiKey: access }
   }

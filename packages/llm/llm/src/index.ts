@@ -169,6 +169,8 @@ export function assertUsableApiKey(raw: string, pkg: string, ref: string): strin
 export interface PreparedLlmCall {
   /** Detached, deep-frozen config with any adapter-owned default materialized. */
   readonly config: LlmCallConfig
+  /** Model instructions captured for the effective reasoning effort of this call. */
+  readonly instructions?: string
   /** Immutable retry policy captured with the adapter registration. */
   readonly retryPolicy: ResolvedRetryPolicy
   /** Detached context metadata resolved with the registration-bound call. */
@@ -865,7 +867,7 @@ export class LlmRuntime extends TypertRemoteService {
         id: effort.id,
         name: effort.name,
         ...effort.description === undefined ? {} : { description: effort.description },
-        ...effort.selectable === undefined ? {} : { selectable: effort.selectable },
+        ...effort.instructions === undefined ? {} : { instructions: effort.instructions },
       }
     })
     if (reasoning.defaultEffort !== undefined && !seen.has(reasoning.defaultEffort)) {
@@ -927,7 +929,7 @@ export class LlmRuntime extends TypertRemoteService {
     } else {
       const effective = requested ?? reasoning.defaultEffort
       if (effective !== undefined) {
-        if (!reasoning.efforts.some(effort => effort.id === effective && effort.selectable !== false)) {
+        if (!reasoning.efforts.some(effort => effort.id === effective)) {
           throw new LlmError(
             `provider "${config.provider}" model "${config.model}" does not support reasoning effort "${effective}"`,
             'UNSUPPORTED_REASONING_EFFORT',
@@ -972,6 +974,8 @@ export class LlmRuntime extends TypertRemoteService {
     signal?.throwIfAborted()
     const resolved = this.resolveCallWithInfo(proposed, modelInfo)
     const resolvedConfig = deepFreeze(structuredClone(resolved.config))
+    const instructions = modelInfo.reasoning?.efforts
+      .find(effort => effort.id === resolvedConfig.reasoningEffort)?.instructions
     const context = resolved.context === undefined
       ? undefined
       : deepFreeze(structuredClone(resolved.context))
@@ -986,6 +990,7 @@ export class LlmRuntime extends TypertRemoteService {
     let dispatched = false
     return Object.freeze({
       config: resolvedConfig,
+      ...instructions === undefined ? {} : { instructions },
       retryPolicy: registration.retryPolicy,
       adapterDefaults,
       ...context === undefined ? {} : { context },

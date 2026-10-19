@@ -808,6 +808,37 @@ describe('agent loop', () => {
     }
   })
 
+  it('logs instructions from the admitted reasoning effort and clears them on a switch', async () => {
+    const instructions = 'Delegate independent work proactively; respect available tools and delegation budgets. Literal {{model}}.'
+    const adapter = new MockAdapter([textResponse('delegated'), textResponse('direct')], {
+      efforts: [
+        { id: ReasoningEffortId('ultra'), name: 'Ultra', instructions },
+        { id: ReasoningEffortId('max'), name: 'Max' },
+      ],
+    })
+    const ctx = await harness(adapter)
+    try {
+      ctx.systemPrompt.suppressRuntimeContext()
+      const agent = await ctx.agentLoop.create(SessionId('reasoning-instructions'), { provider: 'mock', model: 'mock' })
+      let effort = ReasoningEffortId('ultra')
+      ctx.on('agent/request', async (_payload, next) => ({ ...await next(), reasoningEffort: effort }))
+      send(agent, 'first')
+      await agent.whenIdle()
+      expect(agent.session.requestHeader()?.config.reasoningEffort).toBe('ultra')
+      expect(userTexts(agent)).toContain(`Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\n${instructions}`)
+      expect(adapter.requests[0]?.messages.some(message => message.role === 'user'
+        && message.source?.kind === 'runtime-context'
+        && message.content.some(block => block.type === 'text' && block.text.includes(instructions)))).toBe(true)
+      effort = ReasoningEffortId('max')
+      send(agent, 'second')
+      await agent.whenIdle()
+      expect(agent.session.requestHeader()?.config.reasoningEffort).toBe('max')
+      expect(userTexts(agent).at(-1)).toBe('Current runtime context: none. Earlier runtime-context snapshots no longer apply.')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('replaces a stale owned snapshot at its accepted position and admits it once', async () => {
     const adapter = new MockAdapter([textResponse('done')])
     const ctx = await harness(adapter)

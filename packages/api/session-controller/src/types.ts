@@ -126,7 +126,6 @@ export interface ModelReasoningEffort {
   readonly id: string
   readonly name: string
   readonly description?: string
-  readonly selectable?: boolean
 }
 
 /** Selectable reasoning metadata for one exact model route. */

@@ -409,7 +409,13 @@ export class ReactLoopAgent implements Agent {
     while (true) {
       const { config, preparedCall } = await this.prepareRequest(turn, step, signal)
       const currentContext = this.loopCtx.systemPrompt.refreshContext(assembly, assembleContextFor(this, signal))
-      const sections = renderContextSections(currentContext)
+      const sections = renderContextSections({
+        ...currentContext,
+        contexts: [
+          ...currentContext.contexts,
+          { name: 'model-reasoning', text: preparedCall?.instructions ?? '', interpolate: false },
+        ],
+      })
       const context = this.runtimeContext.project(joinContextSections(sections), sections)
       signal.throwIfAborted()
       const startsRequestSeries = firstAttempt && decision.startsRequestSeries === true

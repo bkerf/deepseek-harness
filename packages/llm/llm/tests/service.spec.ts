@@ -782,7 +782,6 @@ describe('LlmRuntime', () => {
       efforts: [
         { id: ReasoningEffortId('standard'), name: 'Standard' },
         { id: ReasoningEffortId('ultra'), name: 'Ultra', description: 'Largest budget' },
-        { id: ReasoningEffortId('native-only'), name: 'Native only', selectable: false },
       ],
       defaultEffort: ReasoningEffortId('standard'),
     }
@@ -809,9 +808,6 @@ describe('LlmRuntime', () => {
     })
     const explicit = { provider: 'route', model: 'model', reasoningEffort: ReasoningEffortId('ultra') }
     await expect(ctx.llm.resolveCallConfig(explicit)).resolves.toBe(explicit)
-    await expect(ctx.llm.resolveCallConfig({
-      provider: 'route', model: 'model', reasoningEffort: ReasoningEffortId('native-only'),
-    })).rejects.toMatchObject({ code: 'UNSUPPORTED_REASONING_EFFORT' })
     const providerDefault = { provider: 'route', model: 'providerDefault' }
     await expect(ctx.llm.resolveCallConfig(providerDefault)).resolves.toBe(providerDefault)
   })
@@ -996,13 +992,20 @@ describe('LlmRuntime', () => {
       {},
       {
         model: {
-          efforts: [{ id: ReasoningEffortId('high'), name: 'High' }],
+          efforts: [
+            { id: ReasoningEffortId('high'), name: 'High', instructions: 'Delegate independent work to subagents.' },
+            { id: ReasoningEffortId('low'), name: 'Low' },
+          ],
           defaultEffort: ReasoningEffortId('high'),
         },
       },
     )
     ctx.llm.registerAdapter(['route'], adapter)
     const prepared = await ctx.llm.prepareCall({ provider: 'route', model: 'model' })
+    expect(prepared.instructions).toBe('Delegate independent work to subagents.')
+    expect(Object.isFrozen(prepared)).toBe(true)
+    const ordinary = await ctx.llm.prepareCall({ provider: 'route', model: 'model', reasoningEffort: ReasoningEffortId('low') })
+    expect(ordinary).not.toHaveProperty('instructions')
     expect(Object.isFrozen(prepared.config)).toBe(true)
     expect(Object.isFrozen(prepared.adapterDefaults)).toBe(true)
     expect(prepared.adapterDefaults).toEqual({ reasoningEffort: true })

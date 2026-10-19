@@ -394,8 +394,8 @@ export interface LlmReasoningEffortInfo {
   name: string
   /** Optional user-facing distinction from otherwise similar efforts. */
   description?: string
-  /** Whether this adapter can execute the effort; omission means selectable. */
-  selectable?: boolean
+  /** Model instructions applied while this reasoning effort is selected. */
+  instructions?: string
 }
 
 /** Selectable reasoning efforts for one exact provider/model route. */

@@ -9,10 +9,11 @@ import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
 
 afterEach(closeMockServers)
 
-const model = (slug = 'gpt-6.1-sol', visibility = 'list') => ({
+const model = (slug = 'gpt-6.1-sol', visibility = 'list', multiAgentReasoningEffort: string | null = 'xhigh') => ({
   slug, display_name: slug, description: 'Account model', visibility,
   supported_in_api: false, default_reasoning_level: 'low',
   supported_reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map(effort => ({ effort, description: effort })),
+  multi_agent_version: 'v2', multi_agent_reasoning_effort: multiAgentReasoningEffort,
   service_tiers: [{ id: 'priority', name: 'Fast', description: '2x speed' }],
   default_service_tier: null, input_modalities: ['text', 'image'], context_window: 500000,
 })
@@ -36,7 +37,12 @@ describe('the Harness account-specific Codex model catalog', () => {
     expect(listed.map(item => item.id)).toEqual(['gpt-6.1-sol', 'future-account-model'])
     expect(info.context?.contextWindow).toBe(500000)
     expect(info.reasoning?.efforts.map(effort => effort.id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
-    expect(info.reasoning?.efforts.find(effort => effort.id === 'ultra')).toMatchObject({ description: 'ultra', selectable: false })
+    const ultra = info.reasoning?.efforts.find(effort => effort.id === 'ultra')
+    expect(ultra?.description).toBe('ultra')
+    expect(ultra?.instructions).toContain('subagent or subagent_fork')
+    expect(ultra?.instructions).toContain('Wait for the delegated results, integrate them, and verify')
+    expect(ultra?.instructions).toContain('configured delegation depth')
+    expect(info.reasoning?.efforts.find(effort => effort.id === 'max')?.instructions).toBeUndefined()
     expect(info.reasoning?.defaultEffort).toBe('low')
     expect(info.serviceTiers).toEqual({
       tiers: [{ id: 'default', name: 'Standard' }, { id: 'priority', name: 'Fast', description: '2x speed' }], defaultTier: 'default',
@@ -51,21 +57,28 @@ describe('the Harness account-specific Codex model catalog', () => {
     expect(server.headers[0]).toMatchObject({ authorization: `Bearer ${token()}`, 'chatgpt-account-id': 'harness-account' })
   })
 
-  it('sends Max and Fast independently without pi-ai clamping or dropping them', async () => {
-    const server = await mockServer([{ body: body() }, ...Array.from({ length: 3 }, () => ({ status: 401, body: '{}' }))])
+  it('resolves Ultra per model while keeping Max and Fast independent', async () => {
+    const server = await mockServer([
+      { body: body([model(), model('gpt-6-sol', 'list', null)]) },
+      ...Array.from({ length: 5 }, () => ({ status: 401, body: '{}' })),
+    ])
     const subject = adapter(server.url, token, 'high')
     const ctx = new Context()
     await ctx.plugin(LlmRuntime)
     ctx.llm.registerAdapter(['openai-codex'], subject)
     try {
       expect((await subject.resolveModel('openai-codex', 'gpt-6.1-sol')).reasoning?.defaultEffort).toBe('high')
+      await assemble(ctx, { provider: 'openai-codex', model: 'gpt-6.1-sol', messages: [], reasoningEffort: ReasoningEffortId('ultra'), serviceTier: ServiceTierId('priority') })
+      await assemble(ctx, { provider: 'openai-codex', model: 'gpt-6-sol', messages: [], reasoningEffort: ReasoningEffortId('ultra'), serviceTier: ServiceTierId('default') })
       await assemble(ctx, { provider: 'openai-codex', model: 'gpt-6.1-sol', messages: [], reasoningEffort: ReasoningEffortId('max'), serviceTier: ServiceTierId('priority') })
       await assemble(ctx, { provider: 'openai-codex', model: 'gpt-6.1-sol', messages: [], reasoningEffort: ReasoningEffortId('max'), serviceTier: ServiceTierId('default') })
       await assemble(ctx, { provider: 'openai-codex', model: 'gpt-6.1-sol', messages: [] })
-      expect(server.requests[1]).toMatchObject({ reasoning: { effort: 'max' }, service_tier: 'priority' })
+      expect(server.requests[1]).toMatchObject({ reasoning: { effort: 'xhigh' }, service_tier: 'priority' })
       expect(server.requests[2]).toMatchObject({ reasoning: { effort: 'max' }, service_tier: 'default' })
-      expect(server.requests[3]).toMatchObject({ reasoning: { effort: 'high' } })
-      expect(server.requests[3]).not.toHaveProperty('service_tier')
+      expect(server.requests[3]).toMatchObject({ reasoning: { effort: 'max' }, service_tier: 'priority' })
+      expect(server.requests[4]).toMatchObject({ reasoning: { effort: 'max' }, service_tier: 'default' })
+      expect(server.requests[5]).toMatchObject({ reasoning: { effort: 'high' } })
+      expect(server.requests[5]).not.toHaveProperty('service_tier')
     } finally { await ctx.fiber.dispose() }
   })
 
@@ -75,7 +88,6 @@ describe('the Harness account-specific Codex model catalog', () => {
     expect((await subject.resolveModel('openai-codex', 'gpt-6.1-sol')).reasoning).not.toHaveProperty('defaultEffort')
     for (const options of [
       { reasoningEffort: ReasoningEffortId('minimal') },
-      { reasoningEffort: ReasoningEffortId('ultra') },
       { reasoningEffort: ReasoningEffortId('high'), serviceTier: ServiceTierId('unavailable') },
     ]) {
       const collect = async () => { for await (const _chunk of subject.stream({ provider: 'openai-codex', model: 'gpt-6.1-sol', messages: [], ...options })) {} }

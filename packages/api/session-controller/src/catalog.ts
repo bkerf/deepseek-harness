@@ -34,7 +34,6 @@ export async function buildModelCatalog(
               id: effort.id,
               name: effort.name,
               ...(effort.description === undefined ? {} : { description: effort.description }),
-              ...(effort.selectable === undefined ? {} : { selectable: effort.selectable }),
             })),
             ...(resolved.reasoning.defaultEffort === undefined
               ? {}

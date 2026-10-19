@@ -51,8 +51,6 @@ interface EffortChoice {
   key: string
   effort: string | undefined
   label: string
-  disabled: boolean
-  hint?: string
 }
 
 /** Unplaced portal card: hidden but laid out at a fixed origin so offsetWidth/offsetHeight are real (Menu primitive's measure pass). */
@@ -139,14 +137,12 @@ export function ModelSelect(
     ? []
     : [
       ...reasoning.defaultEffort === undefined
-        ? [{ key: 'provider-default', effort: undefined, label: t('effort.providerDefault'), disabled: false }]
+        ? [{ key: 'provider-default', effort: undefined, label: t('effort.providerDefault') }]
         : [],
       ...reasoning.efforts.map((effort: ModelReasoningEffort) => ({
         key: `effort:${effort.id}`,
         effort: effort.id,
         label: effort.name,
-        disabled: effort.selectable === false,
-        ...effort.selectable === false && effort.id === 'ultra' ? { hint: t('effort.codexNative') } : {},
       })),
     ], [reasoning, t])
   const { pending } = state
@@ -291,7 +287,7 @@ export function ModelSelect(
   }
 
   const moveFocus = (offset: number): void => {
-    const items = itemRefs.current.filter((item): item is HTMLButtonElement => item !== null && !item.disabled)
+    const items = itemRefs.current.filter(item => item !== null)
     if (items.length === 0) return
     const active = items.findIndex(item => item === document.activeElement)
     // Focus outside the rows (the trigger, which keeps it while the menu
@@ -667,14 +663,12 @@ export function ModelSelect(
                     aria-checked={effectiveEffort === level.effort}
                     className={clsx(css.option, effectiveEffort === level.effort && css.selected)}
                     key={level.key}
-                    disabled={busy || level.disabled}
-                    title={level.hint}
+                    disabled={busy}
                     onClick={() => { chooseEffort(level.effort) }}
                   >
                     <span className={css.optionCopy}>
                       <span className={css.modelName}>{level.label}</span>
                     </span>
-                    {level.hint === undefined ? null : <span className={css.cellValue}>{level.hint}</span>}
                     <span className={css.check}>
                       {pending !== null && pending.provider === state.current?.provider
                         && pending.model === state.current.model && pending.reasoningEffort === level.effort

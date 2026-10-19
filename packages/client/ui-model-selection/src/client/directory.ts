@@ -39,12 +39,8 @@ export function selectionForModel(
   model: ModelProviderGroup['models'][number],
   current: ModelSelection | null,
 ): ModelSelection {
-  const defaultEffort = model.reasoning?.efforts.some(effort =>
-    effort.id === model.reasoning?.defaultEffort && effort.selectable === false) === true
-    ? undefined : model.reasoning?.defaultEffort
-  const reasoningEffort = model.reasoning?.efforts.some(effort =>
-    effort.id === current?.reasoningEffort && effort.selectable !== false) === true
-    ? current?.reasoningEffort : defaultEffort
+  const reasoningEffort = model.reasoning?.efforts.some(effort => effort.id === current?.reasoningEffort) === true
+    ? current?.reasoningEffort : model.reasoning?.defaultEffort
   const serviceTier = model.serviceTiers?.tiers.some(tier => tier.id === current?.serviceTier) === true
     ? current?.serviceTier : model.serviceTiers?.defaultTier
   return {

@@ -417,19 +417,21 @@ export class PiAiAdapter extends LlmAdapter {
     const request = needsPlaceholder
       ? { ...options, tools: [ANTHROPIC_TOOL_UPDATE_PLACEHOLDER, ...tools] }
       : options
-    const codexInfo = options.provider === 'openai-codex' ? snapshot.codex?.models.get(options.model)?.info : undefined
+    const codexModel = options.provider === 'openai-codex' ? snapshot.codex?.models.get(options.model) : undefined
+    const codexInfo = codexModel?.info
     const reasoning = codexInfo === undefined ? resolveReasoningLevel(
       model,
       options.reasoningEffort ?? profile.reasoning,
     ) : undefined
     const codexEffort = options.reasoningEffort ?? profile.reasoning ?? codexInfo?.reasoning.defaultEffort
     if (codexInfo !== undefined && codexEffort !== undefined
-      && !codexInfo.reasoning.efforts.some(effort => effort.id === codexEffort && effort.selectable !== false)) {
+      && !codexInfo.reasoning.efforts.some(effort => effort.id === codexEffort)) {
       throw new LlmError(`Codex model "${model.id}" does not support reasoning effort "${codexEffort}"`, 'UNSUPPORTED_REASONING_EFFORT')
     }
     if (options.serviceTier !== undefined && !codexInfo?.serviceTiers.tiers.some(tier => tier.id === options.serviceTier)) {
       throw new LlmError(`Model "${model.id}" does not support service tier "${options.serviceTier}"`, 'UNSUPPORTED_OPTION')
     }
+    const codexWireEffort = codexEffort === undefined ? undefined : codexModel?.resolveReasoningEffort(codexEffort)
     const apiKey = snapshot.codex?.apiKey ?? await this.config.resolveApiKey(options.provider, profile)
 
     const consumer = new AbortController()
@@ -474,8 +476,8 @@ export class PiAiAdapter extends LlmAdapter {
         ...codexInfo === undefined ? {} : {
           onPayload: (payload: unknown) => ({
             ...payload as Record<string, unknown>,
-            ...codexEffort === undefined ? {} : {
-              reasoning: { ...(payload as { reasoning?: Record<string, unknown> }).reasoning, effort: codexEffort },
+            ...codexWireEffort === undefined ? {} : {
+              reasoning: { ...(payload as { reasoning?: Record<string, unknown> }).reasoning, effort: codexWireEffort },
             },
             ...options.serviceTier === undefined ? {} : { service_tier: options.serviceTier },
           }),

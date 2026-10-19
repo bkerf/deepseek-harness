@@ -487,7 +487,7 @@ describe('Web session model selection', () => {
   })
 
   it('preserves optional catalog metadata and string provider failures', async () => {
-    const { ctx, sessionId } = await harness()
+    const { ctx } = await harness()
     ctx.llm.registerAdapter(['plain'], new CatalogAdapter('Plain', [
       { provider: 'plain', id: 'plain-model', name: 'Plain Model' },
     ]))
@@ -495,8 +495,8 @@ describe('Web session model selection', () => {
       { provider: 'described-reasoning', id: 'reasoning-model', name: 'Reasoning Model' },
     ], {
       efforts: [
-        { id: ReasoningEffortId('high'), name: 'High', description: 'More thinking', selectable: true },
-        { id: ReasoningEffortId('ultra'), name: 'Ultra', description: 'Native multi-agent mode', selectable: false },
+        { id: ReasoningEffortId('high'), name: 'High', description: 'More thinking' },
+        { id: ReasoningEffortId('ultra'), name: 'Ultra', description: 'Native multi-agent mode' },
       ],
     }))
     ctx.llm.registerAdapter(['string-failure'], new class extends CatalogAdapter {
@@ -505,7 +505,7 @@ describe('Web session model selection', () => {
         return Promise.reject('string catalog failure')
       }
     }('String Failure', []))
-    const remote = createSessionTestRemote(ctx, {
+    createSessionTestRemote(ctx, {
       defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
       cwd: '/tmp',
     })
@@ -521,8 +521,8 @@ describe('Web session model selection', () => {
           name: 'Reasoning Model',
           reasoning: {
             efforts: [
-              { id: 'high', name: 'High', description: 'More thinking', selectable: true },
-              { id: 'ultra', name: 'Ultra', description: 'Native multi-agent mode', selectable: false },
+              { id: 'high', name: 'High', description: 'More thinking' },
+              { id: 'ultra', name: 'Ultra', description: 'Native multi-agent mode' },
             ],
           },
         }],
@@ -531,9 +531,6 @@ describe('Web session model selection', () => {
     expect(catalog.failures).toContainEqual({
       id: 'string-failure', name: 'String Failure', message: 'string catalog failure',
     })
-    expect(await remote.selectModel({
-      sessionId, provider: 'described-reasoning', model: 'reasoning-model', reasoningEffort: 'ultra',
-    })).toMatchObject({ ok: false, error: { code: 'session/model-unavailable' } })
     await ctx.fiber.dispose()
   })
 
